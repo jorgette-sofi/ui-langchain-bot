@@ -1,4 +1,5 @@
 import os
+import re
 import asyncio
 # from turtle import clear
 from dotenv import load_dotenv
@@ -11,7 +12,7 @@ from telegram.constants import ParseMode, ChatAction
 from langchain_core.messages import HumanMessage, AIMessage
 
 # Import chain components from retrieval.py
-from retrieval import generation_chain, rewrite_chain, retriever, format_docs
+from retrieval1 import generation_chain, rewrite_chain, retriever, format_docs
 
 # Local DB for user chat histories
 user_histories = {}
@@ -23,6 +24,12 @@ async def clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     user_histories[chat_id] = []
     await update.message.reply_text("<i>Chat history cleared.</i>", parse_mode=ParseMode.HTML)
+
+def clean_markdown(text):
+    text = re.sub(r'\*\*(.*?)\*\*', r'\1', text)
+    text = re.sub(r'\*(.*?)\*', r'\1', text)
+    text = re.sub(r'#{1,6}\s*', '', text)
+    return text
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -58,13 +65,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "current_date": now,
             "chat_history": chat_history
         })
+        
+        answer = clean_markdown(answer)
 
         chat_history.append(HumanMessage(content=user_input))
         chat_history.append(AIMessage(content=answer))
         user_histories[chat_id] = chat_history[-10:]
 
         # await thinking_msg.edit_text(answer)
-        await update.message.reply_text(answer)
+        await update.message.reply_text(answer, parse_mode=ParseMode.HTML)
 
         # for doc in retrieved_docs:
         #     print(doc.metadata)
