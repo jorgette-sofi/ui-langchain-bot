@@ -3,26 +3,22 @@ from dotenv import load_dotenv
 from qdrant_client import QdrantClient
 from langchain_qdrant import QdrantVectorStore
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
-from langchain.chains import create_retrieval_chain
-from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.documents import Document
-from langchain_core.runnables import RunnablePassthrough
-from operator import itemgetter
 from langchain_core.output_parsers import StrOutputParser
 from datetime import datetime
+import time
+from langchain_core.messages import HumanMessage, AIMessage
 
-# 1. Load Environment Variables
 load_dotenv()
 
-# 2. Initialize Qdrant Client and Embeddings
+MAX_CONTEXT_CHARS = 10000 # Limits Tokens
+
 client = QdrantClient(
     url=os.getenv("QDRANT_URL"),
     api_key=os.getenv("QDRANT_API_KEY")
 )
 embeddings = OpenAIEmbeddings(model="text-embedding-3-large", openai_api_key=os.getenv("OPENAI_API_KEY"))
 
-# 3. Connect Qdrant Collection
 collection_name = "HomeAlong OCR Run 3" 
 
 vector_store = QdrantVectorStore(
@@ -33,18 +29,16 @@ vector_store = QdrantVectorStore(
     metadata_payload_key="metadata"
 )
 
-# 4. Set up the LLM
 llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.1, openai_api_key=os.getenv("OPENAI_API_KEY"))
 
-# 5. Create the Prompt
 system_prompt = ( 
     "You are a professional assistant for Home Along. "
     "Answer the user's question using ONLY the provided context.\n\n"
 
     "CURRENT DATE (AUTHORITATIVE — DO NOT GUESS):\n"
     "Today's date is: {current_date}\n"
-    "When a user asks about \"this month\", \"this week\", \"today\", or any relative time reference, you MUST use this date as your reference. NEVER guess, assume, or invent a date. If the retrieved documents do not contain information relevant to the current date/month, use the Fallback Response."
-    "Do NOT include a file if the deadline or effective date has already passed relative to today. If a document's date is in the past, ignore it unless the user specifically asks for historical information."
+    "When a user asks about \"this month\", \"last month\",\"this week\", \"today\", or any relative time reference, you MUST use this date as your reference. NEVER guess, assume, or invent a date. If the retrieved documents do not contain information relevant to the current date/month, use the Fallback Response."
+    "Only filter out past documents when the user is asking about current or upcoming information. If the user explicitly asks about a past date or previous month, include those documents."
     
     "CRITICAL RULES:\n"
     "1. PLAIN TEXT ONLY: Do absolutely no text formatting. Do not use bolding, asterisks, italics, or markdown bullet points. Output plain, readable text with standard line breaks.\n"
@@ -55,67 +49,92 @@ system_prompt = (
     "{context}" 
 )
 
+# History placeholder
 prompt = ChatPromptTemplate.from_messages([
     ("system", system_prompt),
+    ("placeholder", "{chat_history}"),
     ("human", "{input}"),
 ])
 
+# Answer Format
 def format_docs(docs):
+    seen = set()
     formatted_chunks = []
     for doc in docs:
-        content = doc.page_content
         file_name = doc.metadata.get("original_file_name")
+        if file_name in seen:
+            continue
+        seen.add(file_name)
         url = doc.metadata.get("webUrl", "No URL provided")
-        
-        # Append all
+        # Sanitize content — remove null bytes and control characters
+        content = doc.page_content.replace("\x00", "").encode("utf-8", errors="ignore").decode("utf-8")
         formatted_chunks.append(f"Source File: {file_name}\nLink: {url}\nContent: {content}\n---")
-    
-    return "\n".join(formatted_chunks)
+    result = "\n".join(formatted_chunks)
+    return result[:MAX_CONTEXT_CHARS]
 
-# 6. Initialize the separate components
+# Initialize the separate components
 generation_chain = prompt | llm | StrOutputParser()
 
+rewrite_prompt = ChatPromptTemplate.from_messages([
+    ("system", "Today's date is {current_date}. Rewrite the user's question to be fully standalone. IMPORTANT: Replace ALL relative time references (this month, this week, today, etc.) with the actual month name and year based on today's date. Return only the rewritten question."),
+    ("placeholder", "{chat_history}"),
+    ("human", "{input}"),
+])
+
+rewrite_chain = rewrite_prompt | llm | StrOutputParser()
+
 # The retriever
+# retriever = vector_store.as_retriever(
+#     search_type="similarity",
+#     search_kwargs={"k": 5} 
+# )
 retriever = vector_store.as_retriever(
-    search_type="similarity",
-    search_kwargs={"k": 5} 
+    search_type="mmr",
+    search_kwargs={"k": 5, "fetch_k": 20, "lambda_mult": 0.7}
 )
 
 # CHAT LOOP ----------------------------
 def start_chat():
+    chat_history = []
     print("====================================================")
     print("\t\tLangChain Chatbot")
     print("====================================================\n")
 
     while True:
-        # 1. Get user input
         user_input = input("\nYou: ")
 
-        # 2. Check for exit commands
         if user_input.lower() in ['exit', 'quit', 'q']:
             print("Shutting down chatbot. Goodbye!")
             break
         
-        # 3. Skip empty inputs
         if not user_input.strip():
             continue
 
         try:
             print("Bot is thinking...\n")
-            now = datetime.now().strftime("%B %d, %Y")
-            # STEP 1: Retrieve documents
-            retrieved_docs = retriever.invoke(user_input)
-            
-            # STEP 2: Format the retrieved documents
-            formatted_context = format_docs(retrieved_docs)
-            
-            # STEP 3: Pass the clean dictionary, now including the current date
-            answer = generation_chain.invoke({
-                "context": formatted_context,
+            now = datetime.now().strftime('%B %Y')
+
+            # Rewrite query if there's history, then retrieve
+            query_for_retrieval = rewrite_chain.invoke({
                 "input": user_input,
+                "chat_history": chat_history,
                 "current_date": now
             })
-            
+
+            search_query = f"{query_for_retrieval} {datetime.now().strftime('%B %Y')}"
+            retrieved_docs = retriever.invoke(search_query)
+
+            # Format the retrieved documents
+            formatted_context = format_docs(retrieved_docs)
+
+            # Pass the clean dictionary for output
+            answer = generation_chain.invoke({
+                "context": formatted_context,
+                "input": query_for_retrieval,
+                "current_date": now,
+                "chat_history": chat_history
+            })
+
             # # Print the context the LLM actually received
             # print("\n--- WHAT THE LLM SEES ---")
             # if not retrieved_docs:
@@ -130,8 +149,12 @@ def start_chat():
             #         print(f"Filename: {file_name}\nFile Type: {file_type}\nwebUrl: {webUrl}")
             # print("-------------------------\n")
             
-            # Print the final answer
+            # Output the final answer
             print(f"Bot: {answer}")
+
+            chat_history.append(HumanMessage(content=user_input))
+            chat_history.append(AIMessage(content=answer))
+            chat_history = chat_history[-10:] 
 
         except Exception as e:
             print(f"\n[Error]: {e}")
