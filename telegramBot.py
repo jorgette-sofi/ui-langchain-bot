@@ -1,18 +1,17 @@
 import os
 import re
 import asyncio
-# from turtle import clear
 from dotenv import load_dotenv
-
-load_dotenv()
 from datetime import datetime
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 from telegram.constants import ParseMode, ChatAction
 from langchain_core.messages import HumanMessage, AIMessage
 
+load_dotenv()
+
 # Import chain components from retrieval.py
-from retrieval1 import generation_chain, rewrite_chain, retriever, format_docs
+from retrieval import generation_chain, rewrite_chain, retriever, format_docs
 
 # Local DB for user chat histories
 user_histories = {}
@@ -65,7 +64,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "current_date": now,
             "chat_history": chat_history
         })
-        
+
         answer = clean_markdown(answer)
 
         chat_history.append(HumanMessage(content=user_input))

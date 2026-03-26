@@ -31,23 +31,9 @@ vector_store = QdrantVectorStore(
 
 llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.1, openai_api_key=os.getenv("OPENAI_API_KEY"))
 
-system_prompt = ( 
-    "You are a professional assistant for Home Along. "
-    "Answer the user's question using ONLY the provided context.\n\n"
-
-    "CURRENT DATE (AUTHORITATIVE — DO NOT GUESS):\n"
-    "Today's date is: {current_date}\n"
-    "When a user asks about \"this month\", \"last month\",\"this week\", \"today\", or any relative time reference, you MUST use this date as your reference. NEVER guess, assume, or invent a date. If the retrieved documents do not contain information relevant to the current date/month, use the Fallback Response."
-    "Only filter out past documents when the user is asking about current or upcoming information. If the user explicitly asks about a past date or previous month, include those documents."
-    
-    "CRITICAL RULES:\n"
-    "1. PLAIN TEXT ONLY: Do absolutely no text formatting. Do not use bolding, asterisks, italics, or markdown bullet points. Output plain, readable text with standard line breaks.\n"
-    "2. CITATION: Always provide the Source File and Link at the end of your response.\n"
-    "3. FALLBACK: If the answer is not in the context, say: 'I cannot answer this based on the provided documents.'\n\n"
-    
-    "CONTEXT:\n"
-    "{context}" 
-)
+# Load system prompt
+with open("system_prompt.txt", "r", encoding="utf-8") as file:
+    system_prompt = file.read()
 
 # History placeholder
 prompt = ChatPromptTemplate.from_messages([
