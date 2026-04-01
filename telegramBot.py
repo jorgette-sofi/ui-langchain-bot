@@ -17,12 +17,32 @@ from retrieval import generation_chain, rewrite_chain, retriever, format_docs
 user_histories = {}
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Hello! I'm the HomeAlong assistant. Ask me anything.")
+    user_input = update.message.text.strip().lower()
+    if user_input == "/start" or user_input == "hi" or user_input == "hello":
+        await update.message.reply_text("Hello! I'm your Home Along assistant. I can help you with verifying documents,"
+                                        "checking product prices, and providing details about installment requirements."
+                                        "What do you need assistance with today?")
+    else:
+        await update.message.reply_text("To start chatting, use the command: /start or say hi/hello.")
 
 async def clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    user_histories[chat_id] = []
-    await update.message.reply_text("<i>Chat history cleared.</i>", parse_mode=ParseMode.HTML)
+    user_input = update.message.text.strip().lower()
+    if user_input == "#clear":
+        chat_id = update.effective_chat.id
+        user_histories[chat_id] = []
+        await update.message.reply_text("<i>Chat history cleared.</i>", parse_mode=ParseMode.HTML)
+    else:
+        await update.message.reply_text("To clear chat history, use the command: #clear", parse_mode=ParseMode.HTML)
+
+async def help(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    with open("helpPrompt.txt", "r", encoding="utf-8") as file:
+        helpGuide = file.read()
+
+    user_input = update.message.text.strip().lower()
+    if user_input == "/help":
+        await update.message.reply_text(helpGuide, parse_mode=ParseMode.HTML)
+    else:
+        await update.message.reply_text("To view help, use the command: #help", parse_mode=ParseMode.HTML)
 
 def clean_markdown(text):
     text = re.sub(r'\*\*(.*?)\*\*', r'\1', text)
@@ -89,8 +109,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     app = ApplicationBuilder().token(os.getenv("TELEGRAM_BOT_TOKEN")).build()
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.Regex(r'(?i)^(hi|hello)$'), start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(CommandHandler("clear", clear))
+    app.add_handler(CommandHandler("help", help))
 
     print("Bot is running...")
     app.run_polling()
