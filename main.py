@@ -53,7 +53,7 @@ async def chat_endpoint(request: ChatRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# NEW: The endpoint your React Admin dashboard calls to get the inbox data
+#Admin dashboard calls to get the inbox data
 @app.get("/api/admin/logs")
 async def get_admin_logs():
     try:
