@@ -9,15 +9,6 @@ SCOPES = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
 _cache = {"users": set(), "last_updated": None}
 CACHE_TTL_MINUTES = 5
 
-# def _load_sheet():
-#     creds = Credentials.from_service_account_file("google_credentials.json", scopes=SCOPES)
-#     client = gspread.authorize(creds)
-#     sheet = client.open_by_key(os.getenv("GOOGLE_SHEET_ID")).sheet2
-#     names = sheet.col_values(2)
-#     return {name.strip().lower() for name in names if name.strip()}
-#     print(f"[Access Control] Loaded {len(result)} users: {sorted(result)}")=
-#     return result
-
 def _load_sheet():
     creds = Credentials.from_service_account_file("google_credentials.json", scopes=SCOPES)
     client = gspread.authorize(creds)
@@ -26,7 +17,6 @@ def _load_sheet():
     result = {name.strip().lower() for name in names if name.strip()}
     print(f"GSheets Allowed Users: {sorted(result)}")
     return result
-
 
 def allowedUsers(firstName: str, lastName: str = None) -> bool:
     global _cache
