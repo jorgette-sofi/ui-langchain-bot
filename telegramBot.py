@@ -13,6 +13,9 @@ load_dotenv()
 # Import chain components from retrieval.py
 from retrieval import generation_chain, rewrite_chain, retriever, format_docs
 
+# Import user access restriction
+from userAccess import allowedUsers
+
 # Local DB for user chat histories
 user_histories = {}
 
@@ -20,8 +23,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_input = update.message.text.strip().lower()
     if user_input == "/start" or user_input == "hi" or user_input == "hello":
         await update.message.reply_text("Hello! I'm your Home Along assistant. I can help you with verifying documents,"
-                                        "checking product prices, and providing details about installment requirements."
-                                        "What do you need assistance with today?")
+                                        " checking product prices, and providing details about installment requirements."
+                                        " What do you need assistance with today?")
     else:
         await update.message.reply_text("To start chatting, use the command: /start or say hi/hello.")
 
@@ -52,6 +55,18 @@ def clean_markdown(text):
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
+    user = update.effective_user
+    firstName = user.first_name or ""
+    lastName = user.last_name or ""
+
+    # Check user access
+    if not allowedUsers(firstName, lastName):
+        await update.message.reply_text(
+            "Hi there! It looks like you don't have access to the Home Along Bot just yet."
+            " If you need to use this, please reach out to your admin so they can get your account set up!"
+        )
+        return
+
     user_input = update.message.text
     chat_history = user_histories.get(chat_id, [])
 
