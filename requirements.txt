@@ -3,6 +3,7 @@ langchain_core==1.2.24
 langchain_openai==1.1.12
 langchain_qdrant==1.1.0
 protobuf==7.34.1
+psycopg2
 python-dotenv==1.2.2
 python-telegram-bot==22.7
 qdrant_client==1.17.1

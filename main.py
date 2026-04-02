@@ -5,11 +5,15 @@ from typing import Optional
 import uuid
 
 # NEW: Import your database functions
-from database import init_db, save_message, get_all_messages_for_admin
-from retrieval import ask_agent 
+from database import init_db, save_message, get_all_messages_for_admin, clear_chat_history
+# from retrieval import ask_agent 
+from chatbot_backend import chatbotEngine
 
 # NEW: Initialize the Supabase tables when the server starts
 init_db()
+
+# Instantiate the chatbot engine once at startup
+bot = chatbotEngine()
 
 app = FastAPI(title="RAG Agent API")
 
@@ -44,7 +48,7 @@ async def chat_endpoint(request: ChatRequest):
         save_message(current_session, "user", request.message)
 
         # 2. Get the agent's reply (passing the session_id so LangChain knows who is talking)
-        agent_reply = ask_agent(request.message, current_session) 
+        agent_reply = await bot.get_response(current_session, request.message)
         
         # 3. Save the Agent's reply to Supabase
         save_message(current_session, "assistant", agent_reply)

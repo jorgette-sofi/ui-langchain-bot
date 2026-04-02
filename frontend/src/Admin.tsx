@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import './App.css';
@@ -13,52 +13,47 @@ interface Log {
 export default function Admin() {
   const [logs, setLogs] = useState<Log[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
+  const [refreshing, setRefreshing] = useState<boolean>(false);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    const fetchLogs = async () => {
-      try {
-        const response = await fetch('http://localhost:8000/api/admin/logs');
-        if (!response.ok) throw new Error('Failed to fetch logs');
-        const data = await response.json();
-        setLogs(data.logs);
-      } catch (error) {
-        console.error("Error fetching logs:", error);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchLogs();
-    // Optional: Set up a polling interval here to auto-refresh logs every X seconds
+  const fetchLogs = useCallback(async (isRefresh = false) => {
+    if (isRefresh) setRefreshing(true);
+    try {
+      const response = await fetch('http://localhost:8000/api/admin/logs');
+      if (!response.ok) throw new Error('Failed to fetch logs');
+      const data = await response.json();
+      setLogs(data.logs);
+    } catch (error) {
+      console.error("Error fetching logs:", error);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
   }, []);
 
-  // Group logs by session_id and sort messages chronologically
+  useEffect(() => {
+    fetchLogs();
+  }, [fetchLogs]);
+
   const groupedSessions = useMemo(() => {
     const groups: Record<string, Log[]> = {};
-    
-    // The backend sends them DESC, so we process them and reverse the individual arrays later
+
     logs.forEach(log => {
-      if (!groups[log.session_id]) {
-        groups[log.session_id] = [];
-      }
+      if (!groups[log.session_id]) groups[log.session_id] = [];
       groups[log.session_id].push(log);
     });
 
-    // Sort the sessions so the one with the newest message is at the top of the sidebar
     const sortedSessionIds = Object.keys(groups).sort((a, b) => {
       const latestA = new Date(groups[a][0].timestamp).getTime();
       const latestB = new Date(groups[b][0].timestamp).getTime();
       return latestB - latestA;
     });
 
-    // Reverse the message arrays so they read top-to-bottom (oldest to newest) in the chat pane
     sortedSessionIds.forEach(id => {
       groups[id] = groups[id].reverse();
     });
 
-    // Auto-select the most recent session if none is selected
     if (!selectedSessionId && sortedSessionIds.length > 0) {
       setSelectedSessionId(sortedSessionIds[0]);
     }
@@ -66,75 +61,123 @@ export default function Admin() {
     return { groups, sortedSessionIds };
   }, [logs, selectedSessionId]);
 
-  // Auto-scroll to bottom of the chat pane when selecting a new session
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "instant" });
   }, [selectedSessionId]);
 
   const currentMessages = selectedSessionId ? groupedSessions.groups[selectedSessionId] : [];
 
+  const isHtml = (content: string) => /<[a-z][\s\S]*>/i.test(content);
+
+  const formatDate = (timestamp: string) => {
+    const date = new Date(timestamp);
+    return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  };
+
+  const formatTime = (timestamp: string) =>
+    new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
   return (
     <div className="inbox-layout">
-      {/* Sidebar: List of Sessions */}
+      {/* Sidebar */}
       <aside className="inbox-sidebar">
         <div className="sidebar-header">
-          <h2>Inbox</h2>
-          <Link to="/" className="nav-link">Exit</Link>
+          <div className="sidebar-header-left">
+            <h2>Inbox</h2>
+            {!loading && (
+              <span className="session-count">{groupedSessions.sortedSessionIds.length}</span>
+            )}
+          </div>
+          <div className="sidebar-header-right">
+            <button
+              className={`refresh-btn ${refreshing ? 'spinning' : ''}`}
+              onClick={() => fetchLogs(true)}
+              disabled={refreshing}
+              title="Refresh"
+            >
+              <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            </button>
+            <Link to="/" className="nav-link">Exit</Link>
+          </div>
         </div>
-        
+
         {loading ? (
           <div className="sidebar-loading">Loading...</div>
         ) : (
           <div className="session-list">
-            {groupedSessions.sortedSessionIds.map(sessionId => {
-              const sessionLogs = groupedSessions.groups[sessionId];
-              const lastMessage = sessionLogs[sessionLogs.length - 1];
-              const isActive = sessionId === selectedSessionId;
+            {groupedSessions.sortedSessionIds.length === 0 ? (
+              <div className="sidebar-loading">No conversations yet.</div>
+            ) : (
+              groupedSessions.sortedSessionIds.map(sessionId => {
+                const sessionLogs = groupedSessions.groups[sessionId];
+                const lastMessage = sessionLogs[sessionLogs.length - 1];
+                const isActive = sessionId === selectedSessionId;
 
-              return (
-                <div 
-                  key={sessionId} 
-                  className={`session-item ${isActive ? 'active' : ''}`}
-                  onClick={() => setSelectedSessionId(sessionId)}
-                >
-                  <div className="session-meta">
-                    <span className="session-id-short">{sessionId.substring(0, 8)}</span>
-                    <span className="session-time">
-                      {new Date(lastMessage.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    </span>
+                return (
+                  <div
+                    key={sessionId}
+                    className={`session-item ${isActive ? 'active' : ''}`}
+                    onClick={() => setSelectedSessionId(sessionId)}
+                  >
+                    <div className="session-meta">
+                      <span className="session-id-short">{sessionId.substring(0, 10)}</span>
+                      <span className="session-time">
+                        {formatDate(lastMessage.timestamp)} · {formatTime(lastMessage.timestamp)}
+                      </span>
+                    </div>
+                    <div className="session-preview">
+                      <span className={`preview-role ${lastMessage.role}`}>
+                        {lastMessage.role === 'user' ? 'User' : 'Agent'}:
+                      </span>{' '}
+                      {lastMessage.content.length > 38
+                        ? lastMessage.content.substring(0, 38) + '...'
+                        : lastMessage.content}
+                    </div>
+                    <div className="session-msg-count">{sessionLogs.length} messages</div>
                   </div>
-                  <div className="session-preview">
-                    {lastMessage.role === 'user' ? 'User: ' : 'Agent: '}
-                    {lastMessage.content.length > 40 ? lastMessage.content.substring(0, 40) + '...' : lastMessage.content}
-                  </div>
-                </div>
-              );
-            })}
+                );
+              })
+            )}
           </div>
         )}
       </aside>
 
-      {/* Main View: Chat History */}
+      {/* Main View */}
       <main className="inbox-main">
         <header className="inbox-main-header">
-          <h3>Session Details</h3>
-          {selectedSessionId && <span className="full-session-id">{selectedSessionId}</span>}
+          <div>
+            <h3>Session Details</h3>
+            {selectedSessionId && (
+              <span className="full-session-id">{selectedSessionId}</span>
+            )}
+          </div>
+          {currentMessages.length > 0 && (
+            <span className="message-count-badge">{currentMessages.length} messages</span>
+          )}
         </header>
 
         <div className="chat-window admin-chat-window">
           {currentMessages.length > 0 ? (
             currentMessages.map((msg, index) => (
               <div key={index} className={`message-row ${msg.role}`}>
+                {msg.role === 'assistant' && (
+                  <div className="msg-avatar assistant-avatar">HA</div>
+                )}
                 <div className={`message-bubble ${msg.role}`}>
                   {msg.role === 'user' ? (
                     msg.content
+                  ) : isHtml(msg.content) ? (
+                    <div className="help-content" dangerouslySetInnerHTML={{ __html: msg.content }} />
                   ) : (
                     <ReactMarkdown>{msg.content}</ReactMarkdown>
                   )}
-                  <div className="message-timestamp">
-                    {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                  </div>
+                  <div className="message-timestamp">{formatTime(msg.timestamp)}</div>
                 </div>
+                {msg.role === 'user' && (
+                  <div className="msg-avatar user-avatar">U</div>
+                )}
               </div>
             ))
           ) : (
