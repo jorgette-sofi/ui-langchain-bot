@@ -31,3 +31,13 @@ Thumbs.db
 retrieval1.py
 telegramBot1.py
 google_credentials.json
+
+# Node modules (Frontend libraries)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Production build folder
+dist/
+build/
