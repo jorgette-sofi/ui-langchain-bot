@@ -79,71 +79,52 @@ retriever = vector_store.as_retriever(
     search_kwargs={"k": 5, "fetch_k": 20, "lambda_mult": 0.7}
 )
 
-# CHAT LOOP ----------------------------
-def start_chat():
-    chat_history = []
-    print("====================================================")
-    print("\t\tLangChain Chatbot")
-    print("====================================================\n")
+# API Integration ----------------------
+chat_history = []
 
-    while True:
-        user_input = input("\nYou: ")
+from database import get_chat_history
 
-        if user_input.lower() in ['exit', 'quit', 'q']:
-            print("Shutting down chatbot. Goodbye!")
-            break
+def ask_agent(user_input: str, session_id: str) -> str:
+    """
+    Takes a string input and a session ID, retrieves history from Supabase,
+    processes the RAG pipeline, and returns the response.
+    """
+    try:
+        # 1. Fetch real history from Supabase for this specific user
+        raw_history = get_chat_history(session_id, limit=10)
         
-        if not user_input.strip():
-            continue
+        # Convert database rows into LangChain message objects
+        formatted_history = []
+        for msg in raw_history:
+            if msg['role'] == 'user':
+                formatted_history.append(HumanMessage(content=msg['content']))
+            else:
+                formatted_history.append(AIMessage(content=msg['content']))
 
-        try:
-            print("Bot is thinking...\n")
-            now = datetime.now().strftime('%B %Y')
+        now = datetime.now().strftime('%B %Y')
 
-            # Rewrite query if there's history, then retrieve
-            query_for_retrieval = rewrite_chain.invoke({
-                "input": user_input,
-                "chat_history": chat_history,
-                "current_date": now
-            })
+        # 2. Rewrite query using the retrieved history
+        query_for_retrieval = rewrite_chain.invoke({
+            "input": user_input,
+            "chat_history": formatted_history,
+            "current_date": now
+        })
 
-            search_query = f"{query_for_retrieval} {datetime.now().strftime('%B %Y')}"
-            retrieved_docs = retriever.invoke(search_query)
+        # 3. Retrieve relevant documents
+        search_query = f"{query_for_retrieval} {now}"
+        retrieved_docs = retriever.invoke(search_query)
+        formatted_context = format_docs(retrieved_docs)
 
-            # Format the retrieved documents
-            formatted_context = format_docs(retrieved_docs)
+        # 4. Generate final answer
+        answer = generation_chain.invoke({
+            "context": formatted_context,
+            "input": query_for_retrieval,
+            "current_date": now,
+            "chat_history": formatted_history
+        })
 
-            # Pass the clean dictionary for output
-            answer = generation_chain.invoke({
-                "context": formatted_context,
-                "input": query_for_retrieval,
-                "current_date": now,
-                "chat_history": chat_history
-            })
+        return answer
 
-            # # Print the context the LLM actually received
-            # print("\n--- WHAT THE LLM SEES ---")
-            # if not retrieved_docs:
-            #     print("Retriever found no documents.")
-            # else:
-            #     for i, doc in enumerate(retrieved_docs):
-            #         print(f"\n--- Chunk {i+1} ---")
-            #         print(f"Content: '{doc.page_content[:150]}...'") 
-            #         file_name = doc.metadata.get('original_file_name')
-            #         file_type = doc.metadata.get('filetype')
-            #         webUrl = doc.metadata.get('webUrl')
-            #         print(f"Filename: {file_name}\nFile Type: {file_type}\nwebUrl: {webUrl}")
-            # print("-------------------------\n")
-            
-            # Output the final answer
-            print(f"Bot: {answer}")
-
-            chat_history.append(HumanMessage(content=user_input))
-            chat_history.append(AIMessage(content=answer))
-            chat_history = chat_history[-10:] 
-
-        except Exception as e:
-            print(f"\n[Error]: {e}")
-
-if __name__ == "__main__":
-    start_chat()
+    except Exception as e:
+        print(f"\n[RAG Error]: {e}")
+        raise e

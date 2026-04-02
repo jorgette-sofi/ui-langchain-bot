@@ -16,8 +16,11 @@ from retrieval import generation_chain, rewrite_chain, retriever, format_docs
 # Import user access restriction
 from userAccess import allowedUsers
 
-# Local DB for user chat histories
-user_histories = {}
+# Import user access restriction
+from userAccess import allowedUsers
+
+# NEW: Import your database functions
+from database import save_message, get_chat_history, clear_chat_history
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_input = update.message.text.strip().lower()
@@ -32,7 +35,11 @@ async def clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_input = update.message.text.strip().lower()
     if user_input == "#clear":
         chat_id = update.effective_chat.id
-        user_histories[chat_id] = []
+        session_id = f"tg_{chat_id}"
+        
+        # NEW: Clear the history from Supabase
+        await asyncio.to_thread(clear_chat_history, session_id)
+        
         await update.message.reply_text("<i>Chat history cleared.</i>", parse_mode=ParseMode.HTML)
     else:
         await update.message.reply_text("To clear chat history, use the command: #clear", parse_mode=ParseMode.HTML)
@@ -45,7 +52,7 @@ async def help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_input == "/help":
         await update.message.reply_text(helpGuide, parse_mode=ParseMode.HTML)
     else:
-        await update.message.reply_text("To view help, use the command: #help", parse_mode=ParseMode.HTML)
+        await update.message.reply_text("To view help, use the command: /help", parse_mode=ParseMode.HTML)
 
 def clean_markdown(text):
     text = re.sub(r'\*\*(.*?)\*\*', r'\1', text)
@@ -55,6 +62,7 @@ def clean_markdown(text):
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
+    session_id = f"tg_{chat_id}"
     user = update.effective_user
     firstName = user.first_name or ""
     lastName = user.last_name or ""
@@ -68,9 +76,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     user_input = update.message.text
-    chat_history = user_histories.get(chat_id, [])
 
-    # Typing indicator
+    # Typing indicator logic
     stop_typing = asyncio.Event()
     async def keep_typing():
         while not stop_typing.is_set():
@@ -78,48 +85,53 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await asyncio.sleep(4)
     typing_task = asyncio.create_task(keep_typing())
 
-    # thinking_msg = await update.message.reply_text("<i>Thinking...</i>", parse_mode=ParseMode.HTML)
-
     try:
         now = datetime.now().strftime('%B %Y')
 
+        # 1. Fetch past history from Supabase
+        db_history = await asyncio.to_thread(get_chat_history, session_id, 10)
+        chat_history = []
+        for msg in db_history:
+            if msg["role"] == "user":
+                chat_history.append(HumanMessage(content=msg["content"]))
+            elif msg["role"] == "assistant":
+                chat_history.append(AIMessage(content=msg["content"]))
+
+        # 2. Log the NEW user message to Supabase (so Admin sees it immediately)
+        await asyncio.to_thread(save_message, session_id, "user", user_input)
+
+        # Process through LangChain
         query_for_retrieval = await asyncio.to_thread(rewrite_chain.invoke, {
             "input": user_input,
             "chat_history": chat_history,
             "current_date": now
         })
 
-        search_query = f"{query_for_retrieval} {datetime.now().strftime('%B %Y')}"
+        search_query = f"{query_for_retrieval} {now}"
         retrieved_docs = await asyncio.to_thread(retriever.invoke, search_query)
         formatted_context = format_docs(retrieved_docs)
 
         answer = await asyncio.to_thread(generation_chain.invoke, {
             "context": formatted_context,
-            "input": user_input,
+            "input": query_for_retrieval,
             "current_date": now,
             "chat_history": chat_history
         })
 
         answer = clean_markdown(answer)
 
-        chat_history.append(HumanMessage(content=user_input))
-        chat_history.append(AIMessage(content=answer))
-        user_histories[chat_id] = chat_history[-10:]
+        # 3. Log the Agent's reply to Supabase
+        await asyncio.to_thread(save_message, session_id, "assistant", answer)
 
-        # await thinking_msg.edit_text(answer)
+        # Send response to Telegram
         await update.message.reply_text(answer, parse_mode=ParseMode.HTML)
 
-        # for doc in retrieved_docs:
-        #     print(doc.metadata)
-
     except Exception as e:
-        # await thinking_msg.edit_text(f"Error: {e}")
         await update.message.reply_text(f"Error: {e}")
 
     finally:
         stop_typing.set()
         typing_task.cancel()
-
 
 def main():
     app = ApplicationBuilder().token(os.getenv("TELEGRAM_BOT_TOKEN")).build()
