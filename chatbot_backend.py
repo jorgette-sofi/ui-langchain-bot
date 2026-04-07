@@ -163,8 +163,9 @@ class chatbotEngine:
 
             if not retrieved_docs:
                 return (
-                    "Wala akong nahanap na dokumentong may kaugnayan sa iyong tanong. "
-                    "Subukan mong i-rephrase ang tanong, o makipag-ugnayan sa inyong admin para sa tulong."
+                    "I'm sorry, but it seems I can't find any information regarding the announcements "
+                    "for next year in our current records. Maybe we could try using different search terms? "
+                    "I'm right here if you have any other questions!"
                 )
 
             formatted_context = self._format_docs(retrieved_docs)
