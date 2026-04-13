@@ -7,3 +7,4 @@ psycopg2
 python-dotenv==1.2.2
 python-telegram-bot==22.7
 qdrant_client==1.17.1
+pyyaml

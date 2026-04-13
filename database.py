@@ -12,31 +12,28 @@ def get_db_connection():
     """Helper function to establish a database connection."""
     return psycopg2.connect(DATABASE_URL)
 
-# def init_db():
-#     """Creates the database table if it doesn't exist."""
-#     conn = get_db_connection()
-#     cursor = conn.cursor()
-#     cursor.execute('''
-#         CREATE TABLE IF NOT EXISTS messages (
-#             id SERIAL PRIMARY KEY,
-#             user_id varchar(255) NOT NULL,
-#             session_id TEXT NOT NULL,
-#             first_name TEXT NOT NULL,
-#             last_name TEXT NOT NULL,
-#             role TEXT NOT NULL,
-#             message TEXT NOT NULL,
-#             is_bot BOOLEAN NOT NULL,
-#             chat_id TEXT NOT NULL,
-#             source TEXT NOT NULL,
-#             timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-#             translator_message TEXT NOT NULL,
-#             mainagent_message TEXT NOT NULL,
-#             conversation_message TEXT NOT NULL,
-#         )
-#     ''')
-#     conn.commit()
-#     cursor.close()
-#     conn.close()
+def init_db():
+    """Creates the database table if it doesn't exist."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS messages (
+            id SERIAL PRIMARY KEY,
+            user_id varchar(255) NOT NULL,
+            session_id TEXT NOT NULL,
+            first_name TEXT NOT NULL,
+            last_name TEXT NOT NULL,
+            role TEXT NOT NULL,
+            message TEXT NOT NULL,
+            is_bot BOOLEAN NOT NULL,
+            chat_id TEXT NOT NULL,
+            source TEXT NOT NULL,
+            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        )
+    ''')
+    conn.commit()
+    cursor.close()
+    conn.close()
 
 def init_db():
     """Creates the database table if it doesn't exist, and migrates schema if needed."""
