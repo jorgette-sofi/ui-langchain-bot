@@ -1,5 +1,7 @@
 import os
 import re
+import yaml
+import logging
 from dotenv import load_dotenv
 from datetime import datetime
 from langchain_core.messages import HumanMessage, AIMessage
@@ -15,6 +17,12 @@ from langchain_core.output_parsers import StrOutputParser
 from database import get_chat_history, clear_chat_history
 
 load_dotenv()
+
+logging.basicConfig(
+    level=logging.ERROR,
+    format="[%(levelname)s]: %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 class chatbotEngine:
     def __init__(self):
@@ -50,41 +58,55 @@ class chatbotEngine:
             openai_api_key=os.getenv("OPENAI_API_KEY")
         )
 
-        # 4. Setup Chains
+        # 4. Load Prompts
+        self.all_prompts = self.load_prompts()
+        self.translator_prompt = self.all_prompts.get("translator_prompt", "")
+        self.system_prompt = self.all_prompts.get("system_prompt", "")
+        self.input_checker_prompt = self.all_prompts.get("input_checker_prompt", "")
+        self.greetings_message = self.all_prompts.get("greetings_message", "")
+        self.no_access_message = self.all_prompts.get("no_access_message", "")
+        self.invalid_input_message = self.all_prompts.get("invalid_input_message", "")
+
+        # 5. Setup Chains
         self._setup_chains()
 
-    def _setup_chains(self):
-        # System Prompt
+    def load_prompts(self):
         try:
-            with open("system_prompt.txt", "r", encoding="utf-8") as file:
-                system_prompt = file.read()
-        except FileNotFoundError:
-            system_prompt = "You are a helpful assistant."
+            with open("prompts.yaml", "r", encoding="utf-8") as file:
+                return yaml.safe_load(file)
+        except Exception as e:
+            logger.error("Error loading prompts.yaml: %s", e)
+            return {}
 
-        # Generation Chain
-        citation_instruction = (
-            "After each specific piece of information you provide, immediately append a markdown "
-            "link to the document it came from — format: [📄 filename](url). "
-            "Use the exact filename and URL from the context. "
-            "Only cite a source right next to the content it supports. "
-            "Do NOT add a separate Sources or References section at the end."
-        )
+    def _setup_chains(self):
+        if not self.system_prompt:
+            logger.error("system_prompt is empty or missing from prompts.yaml")
+        if not self.translator_prompt:
+            logger.error("translator_prompt is empty or missing from prompts.yaml")
 
-        gen_prompt = ChatPromptTemplate.from_messages([
-            ("system", system_prompt),
-            ("system", citation_instruction),
+        translate_prompt = ChatPromptTemplate.from_messages([
+            ("system", self.translator_prompt),
             ("placeholder", "{chat_history}"),
             ("human", "{input}"),
         ])
-        self.generation_chain = gen_prompt | self.llm | StrOutputParser()
+        self.rewrite_chain = translate_prompt | self.llm | StrOutputParser()
 
-        # Rewrite Chain
-        rewrite_prompt = ChatPromptTemplate.from_messages([
-            ("system", "Today's date is {current_date}. Rewrite the user's question to be fully standalone. IMPORTANT: Replace ALL relative time references (this month, this week, today, etc.) with the actual month name and year based on today's date. Return only the rewritten question."),
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", self.system_prompt),
             ("placeholder", "{chat_history}"),
             ("human", "{input}"),
         ])
-        self.rewrite_chain = rewrite_prompt | self.llm | StrOutputParser()
+        self.generation_chain = prompt | self.llm | StrOutputParser()
+
+        if self.input_checker_prompt:
+            checker_prompt = ChatPromptTemplate.from_messages([
+                ("system", self.input_checker_prompt),
+                ("human", "{input}"),
+            ])
+            self.input_checker_chain = checker_prompt | self.llm | StrOutputParser()
+        else:
+            self.input_checker_chain = None
+            logger.error("input_checker_prompt is missing from prompts.yaml")
 
     def _format_docs(self, docs):
         seen = set()
@@ -128,11 +150,7 @@ class chatbotEngine:
         
         # Handle Start/Greetings
         if clean_input in ["/start", "hi", "hello"]:
-            return (
-                "Hello! I'm your Home Along assistant. I can help you with verifying documents, "
-                "checking product prices, and providing details about installment requirements. "
-                "What do you need assistance with today?"
-            )
+            return (self.greetings_message) if self.greetings_message else "Hello! How can I assist you today?"
         
         # Handle Clear History
         if clean_input in ["/clear", "#clear"]:
@@ -140,12 +158,14 @@ class chatbotEngine:
             
         # Handle Help
         if clean_input in ["/help", "#help"]:
-            try:
-                with open("helpPrompt.txt", "r", encoding="utf-8") as file:
-                    return file.read()
-            except FileNotFoundError:
-                return "Help guide is currently unavailable. Please contact the administrator."
+            return self.all_prompts.get("help_prompt", "Help guide is currently unavailable. Please contact the administrator.")
         
+        # Validate input before hitting the full pipeline
+        if self.input_checker_chain:
+            validation = await self.input_checker_chain.ainvoke({"input": user_input})
+            if validation.strip().upper() == "INVALID":
+                return self.invalid_input_message or "I'm sorry, I couldn't understand your message. Could you please rephrase it?"
+
         chat_history = self.get_history(session_id)
         now = datetime.now().strftime('%B %Y')
 
@@ -163,9 +183,8 @@ class chatbotEngine:
 
             if not retrieved_docs:
                 return (
-                    "I'm sorry, but it seems I can't find any information regarding the announcements "
-                    "for next year in our current records. Maybe we could try using different search terms? "
-                    "I'm right here if you have any other questions!"
+                    "Wala akong nahanap na dokumentong may kaugnayan sa iyong tanong. "
+                    "Subukan mong i-rephrase ang tanong, o makipag-ugnayan sa inyong admin para sa tulong."
                 )
 
             formatted_context = self._format_docs(retrieved_docs)
@@ -184,4 +203,5 @@ class chatbotEngine:
             return clean_answer
 
         except Exception as e:
+            logger.error("Error in get_response for session_id=%s: %s", session_id, e, exc_info=True)
             return f"An error occurred: {str(e)}"
